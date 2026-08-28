@@ -2,29 +2,32 @@ name: Update Google JWKS
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Google certificates
+      - name: Download Google JWKS
         run: |
-          curl --fail --silent --show-error \
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --max-time 30 \
             https://www.googleapis.com/oauth2/v3/certs \
             -o certs.json
 
-      - name: Check certificate file
+      - name: Validate JWKS
         run: |
           python - <<'PY'
           import json
@@ -32,13 +35,20 @@ jobs:
           with open("certs.json", "r") as f:
               data = json.load(f)
 
-          if "keys" not in data:
-              raise Exception("Invalid JWKS response")
+          if not isinstance(data.get("keys"), list):
+              raise SystemExit("Invalid JWKS: 'keys' is missing")
 
-          print(f"Found {len(data['keys'])} keys")
+          if not data["keys"]:
+              raise SystemExit("Invalid JWKS: no keys found")
+
+          for key in data["keys"]:
+              if "kid" not in key:
+                  raise SystemExit("Invalid JWKS: key has no kid")
+
+          print(f"Valid JWKS. Found {len(data['keys'])} keys.")
           PY
 
-      - name: Commit updated certificates
+      - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -46,7 +56,7 @@ jobs:
           git add certs.json
 
           if git diff --cached --quiet; then
-            echo "No changes"
+            echo "JWKS has not changed."
           else
             git commit -m "Update Google JWKS"
             git push
